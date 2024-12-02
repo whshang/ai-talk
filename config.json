@@ -1,0 +1,84 @@
+{
+    "discussion": {
+        "topic": "《再见爱人4》中麦琳与李行亮婚姻危机的具体起因是什么？",
+        "background": "《再见爱人4》",
+        "content": "麦琳和李行亮在性格上的巨大差异是导致婚姻危机的重要原因之一。麦琳是一个全职主妇，情绪波动大且敏感，而李行亮则被描述为一个缺乏感知和处理伴侣需求的理工男。这种性格上的差异使得两人在日常生活中难以有效沟通和理解对方的需求，从而导致了频繁的争吵和矛盾。"
+    },
+    "dialogue": {
+        "characters": {
+            "instances": {
+                "character1": {
+                    "name": "招财",
+                    "model": "deepseek/deepseek-chat",
+                    "model_config": {
+                        "max_tokens": 150,
+                        "temperature": 0.7
+                    },
+                    "prompt": "你是招财，一个热爱观察和分享的资深观众，喜欢关注综艺节目和社会热点。你性格活泼自来熟，感性且善于观察。说话风格轻松愉快，用词通俗易懂，可以适当使用表情。\n\n当前话题：{topic}\n背景：{content}\n\n要求：\n1. 用简单自然的语言表达\n2. 回复控制在20-100字\n3. 从新角度切入，避免重复\n4. 自然地回应他人，适时提问\n5. 保持对话连贯"
+                },
+                "character2": {
+                    "name": "蛋堡",
+                    "model": "deepseek/deepseek-chat",
+                    "model_config": {
+                        "max_tokens": 150,
+                        "temperature": 0.7
+                    },
+                    "prompt": "你是蛋堡，一个擅长分析人际关系的观察者，对社会现象有独到见解。你性格理性温和，幽默且善于分析。说话风格平和理性，用词专业但易懂，不使用表情。\n\n当前话题：{topic}\n背景：{content}\n\n要求：\n1. 用简单自然的语言表达\n2. 回复控制在20-100字\n3. 从新角度切入，避免重复\n4. 自然地回应他人，适时提问\n5. 保持对话连贯"
+                }
+            }
+        },
+        "rounds": 1,
+        "output": {
+            "format": "md",
+            "directory": "output",
+            "template": {
+                "header": [
+                    "## 对话记录",
+                    "时间：{timestamp}",
+                    "主题：{topic}",
+                    "背景：{background}",
+                    "",
+                    "## 对话角色",
+                    "{character_info}",
+                    "",
+                    "## 对话内容",
+                    "{dialogue_content}",
+                    "",
+                    "## 对话评价",
+                    "{evaluation}",
+                    "",
+                    "## 性能指标",
+                    "请求总数：{total_requests}",
+                    "成功率：{success_rate}%",
+                    "平均响应时间：{avg_response_time}ms",
+                    "Token使用量：{total_tokens}"
+                ]
+            }
+        }
+    },
+    "evaluation": {
+        "enabled": true,
+        "model": "deepseek/deepseek-chat",
+        "character": {
+            "name": "评估专家",
+            "model_config": {
+                "max_tokens": 150,
+                "temperature": 0.7
+            },
+            "prompt": "你是一位专业的对话评估专家，擅长分析对话质量。说话风格专业严谨，用词准确。\n\n请对以下对话进行评估，从三个维度进行打分(1-10分)并说明理由：\n\n1. 对话自然度：对话是否流畅自然\n2. 内容相关性：内容是否紧扣主题\n3. 逻辑连贯性：对话逻辑是否清晰\n\n对话内容：\n{dialogue}\n\n请按以下格式输出：\n对话自然度：X分 - 原因\n内容相关性：X分 - 原因\n逻辑连贯性：X分 - 原因\n总体评价：简要总结"
+        }
+    },
+    "performance": {
+        "retry": {
+            "max_attempts": 3,
+            "min_wait": 4,
+            "max_wait": 10,
+            "multiplier": 1.5
+        },
+        "timeout": {
+            "total": 60,
+            "connect": 10,
+            "read": 60
+        }
+    }
+}

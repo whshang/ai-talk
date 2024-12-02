@@ -84,7 +84,6 @@ class DialogueService:
             # 关闭客户端
             for client in self.clients.values():
                 await client.close()
-            await self.evaluator.close()
             
     async def save_dialogue(self, evaluation: str = None) -> None:
         """保存对话记录和评估结果"""
@@ -97,18 +96,19 @@ class DialogueService:
             # 格式化角色信息
             characters = []
             for character_id, character in self.config["dialogue"]["characters"]["instances"].items():
+                # 从prompt中提取第一行作为角色描述
+                description = character["prompt"].split('\n')[0]
+                
                 characters.append(f"""
 {character["name"]}
-性格：{", ".join(character["personality"])}
-设定：{character["background"]}
+角色描述：{description}
 模型：{character["model"]}""".strip())
                 
             # 格式化对话内容
             dialogue = []
             for msg in self.dialogue_history:
                 character = self.config["dialogue"]["characters"]["instances"][msg["character"]]
-                dialogue.append(f"""[{character["name"]}]：
-{msg["content"]}""")
+                dialogue.append(f"""[{character["name"]}] {msg["content"]}""")
                 
             # 组合所有内容
             content = f"""## 对话记录
@@ -137,18 +137,21 @@ class DialogueService:
     def _prepare_system_prompt(self, character_id: str) -> str:
         """准备系统提示"""
         character = self.config["dialogue"]["characters"]["instances"][character_id]
+        return character["prompt"].format(
+            topic=self.config["discussion"]["topic"],
+            content=self.config["discussion"]["content"]
+        )
         
-        return f"""你现在扮演{character["name"]}，一个{character["role"]}。你的性格是{", ".join(character["personality"])}，对{", ".join(character["interests"])}特别感兴趣。作为{character["background"]}，你会用{character["language_style"]["tone"]}的语气和{character["language_style"]["vocabulary"]}的词汇来表达。请保持{character["language_style"]["formality"]}的交谈风格，{"可以" if character["language_style"]["use_emoji"] else "不要"}使用表情。
-
-当前讨论的话题是：{self.config["discussion"]["topic"]}
-
-背景信息：{self.config["discussion"]["background"]}
-
-你需要：
-1. 字数保持在{self.config["response_requirements"]["length"]["min"]}-{self.config["response_requirements"]["length"]["max"]}字之间
-2. 用纯文本回复，不使用特殊格式
-3. 每次从新的角度切入，避免重复
-4. 积极回应他人，提出有见地的问题
-5. 展现你的特色，如感性观察或理性分析
-6. 推进对话深入，但不要过于跳跃
-7. 保持自然的对话节奏，不要生硬"""
+    async def close(self):
+        """关闭服务"""
+        try:
+            # 关闭评估器
+            if hasattr(self, 'evaluator'):
+                await self.evaluator.close()
+                
+            # 关闭所有客户端
+            for client in self.clients.values():
+                await client.close()
+                
+        except Exception as e:
+            logger.error(f"关闭服务时出错: {str(e)}")

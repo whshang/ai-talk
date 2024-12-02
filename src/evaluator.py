@@ -1,8 +1,5 @@
-import os
-import json
 import logging
 from typing import Dict, Any
-from datetime import datetime
 from src.client import AIClient
 
 logger = logging.getLogger(__name__)
@@ -12,66 +9,54 @@ class DialogueEvaluator:
     
     def __init__(self, config: Dict[str, Any]):
         """初始化评估器"""
-        if "evaluation" not in config:
-            raise ValueError("配置缺少 'evaluation' 字段")
-            
-        # 创建评估客户端
+        self.config = config
+        
+        # 获取评估模型
+        evaluation_model = config["evaluation"]["model"]
+        
+        # 创建评估专用客户端配置
         evaluator_config = {
             "dialogue": {
                 "characters": {
                     "instances": {
                         "evaluator": {
-                            **config["evaluation"]["evaluator"],
-                            "model": config["evaluation"]["model"]
+                            **self.config["evaluation"]["character"],
+                            "model": evaluation_model
                         }
                     }
                 }
-            },
-            "system_prompts": {
-                "templates": {
-                    "base": config["system_prompts"]["templates"]["evaluator"]
-                }
-            },
-            "discussion": config["discussion"],
-            "response_requirements": config["response_requirements"],
-            "evaluation": config["evaluation"]
+            }
         }
+        
+        # 合并配置
+        evaluator_config.update({k:v for k,v in config.items() if k != "dialogue"})
         
         self.client = AIClient(evaluator_config, "evaluator")
         
     async def evaluate(self, dialogue_file: str) -> str:
         """评估对话"""
         try:
-            # 读取对话记录
             with open(dialogue_file, "r", encoding="utf-8") as f:
                 dialogue = f.read()
                 
-            # 发送评估请求
+            prompt = self.config["evaluation"]["character"]["prompt"].format(
+                dialogue=dialogue
+            )
+            
             evaluation = await self.client.chat([
                 {
-                    "role": "system",
-                    "content": """请对以下对话进行评估：
-
-1. 总体评分（1-10分）
-2. 评分理由
-3. 改进建议"""
-                },
-                {
                     "role": "user",
-                    "content": dialogue
+                    "content": prompt
                 }
             ])
             
-            if evaluation:
-                return evaluation
-            else:
-                logger.error("评估失败：未能获取评估结果")
-                return None
-                
+            return evaluation if evaluation else "评估失败：未获得有效响应"
+            
         except Exception as e:
             logger.error(f"评估对话时出错: {str(e)}")
-            raise
+            return f"评估失败: {str(e)}"
             
-    async def close(self) -> None:
-        """关闭评估器"""
-        await self.client.close()
+    async def close(self):
+        """关闭客户端"""
+        if self.client:
+            await self.client.close()
