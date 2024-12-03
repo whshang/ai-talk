@@ -101,7 +101,7 @@ class AIClient:
             character_config = self.config["dialogue"]["characters"]["instances"][self.role]
             
             # 检查所需字段
-            required_fields = ["name", "role", "personality", "interests", "background", "language_style"]
+            required_fields = ["name", "role", "personality", "interests", "content", "language_style"]
             for field in required_fields:
                 if field not in character_config:
                     raise ValueError(f"角色配置缺少{field}字段")
@@ -148,7 +148,6 @@ class AIClient:
                     role=character_config["role"],
                     personality=", ".join(character_config["personality"]) if isinstance(character_config["personality"], list) else character_config["personality"],
                     interests=", ".join(character_config["interests"]) if isinstance(character_config["interests"], list) else character_config["interests"],
-                    background=character_config["background"],
                     tone=language_style["tone"],
                     formality=language_style["formality"],
                     vocabulary=language_style["vocabulary"],
@@ -164,9 +163,53 @@ class AIClient:
         except Exception as e:
             raise ValueError(f"准备系统提示时出错: {str(e)}")
             
+    async def ensure_session(self):
+        """确保session已创建"""
+        if self.session is None or self.session.closed:
+            # 获取超时配置
+            timeout_config = self.performance_config.get("timeout", {})
+            timeout = ClientTimeout(
+                total=timeout_config.get("total", 180),
+                connect=timeout_config.get("connect", 10),
+                sock_connect=timeout_config.get("sock_connect", 10),
+                sock_read=timeout_config.get("read", 120)
+            )
+            
+            # 创建新会话
+            connector = TCPConnector(
+                ssl=False,
+                limit=10,  # 限制并发连接数
+                ttl_dns_cache=300,  # DNS缓存时间
+                keepalive_timeout=60  # keepalive超时
+            )
+            
+            self.session = aiohttp.ClientSession(
+                timeout=timeout,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                connector=connector,
+                raise_for_status=True  # 自动抛出HTTP错误
+            )
+            
+    async def close(self):
+        """关闭客户端"""
+        if self.session and not self.session.closed:
+            await self.session.close()
+            
+    async def __aenter__(self):
+        """异步上下文管理器入口"""
+        await self.ensure_session()
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器出口"""
+        await self.close()
+        
     @retry(
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1.5, min=2, max=8),
+        stop=stop_after_attempt(5),
         retry=retry_if_exception_type(
             (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError)
         ),
@@ -201,7 +244,7 @@ class AIClient:
             logger.info("\n[对话开始] =========")
             logger.info(f"角色: {self.role}")
             logger.info(f"模型: {self.model}")
-            logger.info(f"尝试: {self.metrics['total_requests']}/3")
+            logger.info(f"尝试: {self.metrics['total_requests']}/5")
             
             # 记录请求参数
             logger.info("\n[请求参数]")
@@ -210,30 +253,36 @@ class AIClient:
             
             # 发送请求
             async with self.session.post(self.api_url, json=params) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    self.metrics["failed_requests"] += 1
-                    self.metrics["error_count"] += 1
-                    logger.error(f"API请求失败，状态码: {response.status}, 错误信息: {error_text}")
-                    response_content = "API请求失败"
+                result = await response.json()
+                
+                # 更新性能指标
+                if "choices" in result and len(result["choices"]) > 0:
+                    response_content = result["choices"][0]["message"]["content"]
                 else:
-                    result = await response.json()
+                    logger.error("API响应格式错误")
+                    self.metrics["failed_requests"] += 1
+                    response_content = "API响应格式错误"
                     
-                    # 更新性能指标
-                    if "choices" in result and len(result["choices"]) > 0:
-                        response_content = result["choices"][0]["message"]["content"]
-                    else:
-                        logger.error("API响应格式错误")
-                        self.metrics["failed_requests"] += 1
-                        response_content = "API响应格式错误"
-                        
-                    if "usage" in result:
-                        self.metrics["total_tokens"] += result["usage"].get("total_tokens", 0)
-                        
-        except Exception as e:
+                if "usage" in result:
+                    self.metrics["total_tokens"] += result["usage"].get("total_tokens", 0)
+                    
+        except aiohttp.ClientError as e:
             self.metrics["failed_requests"] += 1
             self.metrics["error_count"] += 1
             self.metrics["retry_count"] += 1
+            logger.error(f"网络请求失败: {str(e)}")
+            raise  # 让重试装饰器处理
+            
+        except asyncio.TimeoutError as e:
+            self.metrics["failed_requests"] += 1
+            self.metrics["error_count"] += 1
+            self.metrics["retry_count"] += 1
+            logger.error(f"请求超时: {str(e)}")
+            raise  # 让重试装饰器处理
+            
+        except Exception as e:
+            self.metrics["failed_requests"] += 1
+            self.metrics["error_count"] += 1
             logger.error(f"聊天请求失败: {str(e)}")
             response_content = f"请求失败: {str(e)}"
             
@@ -242,7 +291,7 @@ class AIClient:
             self.response_time = time.time() - start_time
             
             # 更新其他指标
-            if response_content:
+            if response_content and "请求失败" not in response_content:
                 self.metrics["successful_requests"] += 1
                 self.metrics["total_response_time"] += self.response_time
                 self.metrics["max_response_time"] = max(self.metrics["max_response_time"], self.response_time)
@@ -260,43 +309,6 @@ class AIClient:
             metrics["error_rate"] = metrics["error_count"] / metrics["total_requests"]
         return metrics
 
-    async def ensure_session(self):
-        """确保session已创建"""
-        if self.session is None or self.session.closed:
-            timeout = ClientTimeout(
-                total=self.performance_config.get("timeout", {}).get("total", 30),
-                connect=self.performance_config.get("timeout", {}).get("connect", 10),
-                sock_connect=self.performance_config.get("timeout", {}).get("sock_connect", 10),
-                sock_read=self.performance_config.get("timeout", {}).get("sock_read", 10)
-            )
-            
-            self.session = aiohttp.ClientSession(
-                timeout=timeout,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
-                },
-                connector=TCPConnector(ssl=False)
-            )
-            
-    async def close(self):
-        """关闭客户端"""
-        if self.session and not self.session.closed:
-            try:
-                await self.session.close()
-                self.session = None
-            except Exception as e:
-                logger.error(f"关闭session时出错: {str(e)}")
-                
-    async def __aenter__(self):
-        """进入异步上下文管理器"""
-        await self.ensure_session()
-        return self
-        
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """退出异步上下文管理器"""
-        await self.close()
-        
     def _summarize_history(self, messages: List[Dict[str, str]]) -> str:
         """生成对话历史摘要"""
         if len(messages) <= 1:  # 如果只有系统提示或空消息列表

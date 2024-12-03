@@ -50,9 +50,10 @@ class CursorComposerAgent:
         # 分析代码文件
         code_files = [
             'main.py',
-            'chat_manager.py',
-            'ai_client.py',
-            'config_loader.py'
+            'src/client.py',
+            'src/service.py',
+            'src/evaluator.py',
+            'src/logger.py'
         ]
         
         for file in code_files:
@@ -151,9 +152,10 @@ class CursorComposerAgent:
             # 1. 检查文件完整性
             required_files = [
                 'main.py',
-                'chat_manager.py',
-                'ai_client.py',
-                'config_loader.py',
+                'src/client.py',
+                'src/service.py',
+                'src/evaluator.py',
+                'src/logger.py',
                 'config.json',
                 '.env'
             ]
@@ -182,12 +184,45 @@ class CursorComposerAgent:
                 ['python', 'main.py'],
                 capture_output=True,
                 text=True,
-                timeout=5  # 设置超时时间
+                timeout=120  # 增加超时时间以匹配config.json中的设置
             )
             
             if result.returncode == 0:
                 print("✅ 主程序运行正常")
-                return True
+                # 检查对话输出
+                output_files = [f for f in os.listdir('output') if f.endswith('.md')]
+                if output_files:
+                    latest_output = max(output_files, key=lambda x: os.path.getctime(os.path.join('output', x)))
+                    print(f"\n检查最新对话输出: {latest_output}")
+                    with open(os.path.join('output', latest_output), 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        if len(content.split('\n')) > 10:
+                            # 检查评估结果
+                            if "API请求失败" in content or "请求失败" in content:
+                                print("❌ 评估请求失败")
+                                # 尝试修复评估配置
+                                with open('config.json', 'r', encoding='utf-8') as cf:
+                                    config = json.load(cf)
+                                    # 调整评估模型配置
+                                    config['evaluation']['model_config'] = {
+                                        "max_tokens": 500,
+                                        "temperature": 0.5,
+                                        "timeout": 90  # 增加超时时间
+                                    }
+                                    # 确保评估启用
+                                    config['evaluation']['enabled'] = True
+                                with open('config.json', 'w', encoding='utf-8') as cf:
+                                    json.dump(config, cf, indent=4)
+                                print("✅ 已更新评估配置")
+                                return False
+                            print("✅ 对话输出正常")
+                            return True
+                        else:
+                            print("❌ 对话输出过短")
+                            return False
+                else:
+                    print("❌ 未找到对话输出文件")
+                    return False
             else:
                 print(f"❌ 主程序运行失败: {result.stderr}")
                 return False
